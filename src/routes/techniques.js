@@ -1,101 +1,140 @@
 const { Router } = require('express');
-const { techniques, getId } = require('../db');
+const Technique = require('../models/Technique');
+const { authenticate, authorize } = require('../middleware/auth');
 
 const router = Router();
 
-/* ─────────────────────────────────────────────
-   Helper – validate the request body
-   ───────────────────────────────────────────── */
-function validate(body, res) {
-  const { technique, category } = body;
-  if (!technique || typeof technique !== 'string' || !technique.trim()) {
-    res.status(400).json({ error: '"technique" is required and must be a non-empty string.' });
-    return false;
+function buildSearchFilter(query, category) {
+  const filter = {};
+
+  if (category) {
+    filter.category = new RegExp(`^${category.trim()}$`, 'i');
   }
-  if (!category || typeof category !== 'string' || !category.trim()) {
-    res.status(400).json({ error: '"category" is required and must be a non-empty string.' });
-    return false;
+
+  if (query) {
+    const q = query.trim();
+    filter.$or = [
+      { technique: new RegExp(q, 'i') },
+      { category: new RegExp(q, 'i') },
+      { description: new RegExp(q, 'i') },
+    ];
   }
-  return true;
+
+  return filter;
 }
 
-/* ─────────────────────────────────────────────
-   GET  /techniques  – list all
-   ───────────────────────────────────────────── */
-router.get('/', (req, res) => {
-  res.json(techniques);
+router.get('/', async (req, res) => {
+  const { q, category, page = 1, limit = 12 } = req.query;
+  const pageNumber = Math.max(Number(page) || 1, 1);
+  const pageSize = Math.max(Number(limit) || 12, 1);
+
+  const filter = buildSearchFilter(q, category);
+  const total = await Technique.countDocuments(filter);
+  const techniques = await Technique.find(filter)
+    .sort({ createdAt: -1 })
+    .skip((pageNumber - 1) * pageSize)
+    .limit(pageSize);
+
+  return res.json({ data: techniques, total, page: pageNumber, limit: pageSize });
 });
 
-/* ─────────────────────────────────────────────
-   GET  /techniques/:id  – get one
-   ───────────────────────────────────────────── */
-router.get('/:id', (req, res) => {
-  const item = techniques.find((t) => t.id === Number(req.params.id));
-  if (!item) return res.status(404).json({ error: 'Technique not found.' });
-  res.json(item);
+router.get('/search', async (req, res) => {
+  const { q } = req.query;
+  if (!q || String(q).trim().length === 0) {
+    return res.json({ data: [], total: 0 });
+  }
+
+  const filter = buildSearchFilter(q, null);
+  const techniques = await Technique.find(filter).sort({ createdAt: -1 }).limit(8);
+  const total = await Technique.countDocuments(filter);
+
+  return res.json({ data: techniques, total });
 });
 
-/* ─────────────────────────────────────────────
-   POST /techniques  – create
-   ───────────────────────────────────────────── */
-router.post('/', (req, res) => {
-  if (!validate(req.body, res)) return;
+router.get('/:id', async (req, res) => {
+  const technique = await Technique.findById(req.params.id);
+  if (!technique) {
+    return res.status(404).json({ error: 'Técnica não encontrada.' });
+  }
 
-  const { technique, category, description = '' } = req.body;
-  const newItem = {
-    id: getId(),
+  return res.json(technique);
+});
+
+router.post('/', authenticate, authorize('admin', 'editor'), async (req, res) => {
+  const { technique, category, description = '', video = '', thumbnail = '', tags = [] } = req.body;
+
+  if (!technique || !category) {
+    return res.status(400).json({ error: 'Os campos technique e category são obrigatórios.' });
+  }
+
+  const newTechnique = await Technique.create({
     technique: technique.trim(),
     category: category.trim(),
-    description: typeof description === 'string' ? description.trim() : '',
-  };
+    description: String(description || '').trim(),
+    video: String(video || '').trim(),
+    thumbnail: String(thumbnail || '').trim(),
+    tags: Array.isArray(tags) ? tags.map((tag) => String(tag).trim()) : [],
+  });
 
-  techniques.push(newItem);
-  res.status(201).json(newItem);
+  return res.status(201).json(newTechnique);
 });
 
-/* ─────────────────────────────────────────────
-   PUT /techniques/:id  – full update
-   ───────────────────────────────────────────── */
-router.put('/:id', (req, res) => {
-  const idx = techniques.findIndex((t) => t.id === Number(req.params.id));
-  if (idx === -1) return res.status(404).json({ error: 'Technique not found.' });
-  if (!validate(req.body, res)) return;
+router.put('/:id', authenticate, authorize('admin', 'editor'), async (req, res) => {
+  const { technique, category, description = '', video = '', thumbnail = '', tags = [] } = req.body;
 
-  const { technique, category, description = '' } = req.body;
-  techniques[idx] = {
-    ...techniques[idx],
-    technique: technique.trim(),
-    category: category.trim(),
-    description: typeof description === 'string' ? description.trim() : '',
-  };
+  if (!technique || !category) {
+    return res.status(400).json({ error: 'Os campos technique e category são obrigatórios.' });
+  }
 
-  res.json(techniques[idx]);
+  const updated = await Technique.findByIdAndUpdate(
+    req.params.id,
+    {
+      technique: technique.trim(),
+      category: category.trim(),
+      description: String(description || '').trim(),
+      video: String(video || '').trim(),
+      thumbnail: String(thumbnail || '').trim(),
+      tags: Array.isArray(tags) ? tags.map((tag) => String(tag).trim()) : [],
+    },
+    { new: true }
+  );
+
+  if (!updated) {
+    return res.status(404).json({ error: 'Técnica não encontrada.' });
+  }
+
+  return res.json(updated);
 });
 
-/* ─────────────────────────────────────────────
-   PATCH /techniques/:id  – partial update
-   ───────────────────────────────────────────── */
-router.patch('/:id', (req, res) => {
-  const idx = techniques.findIndex((t) => t.id === Number(req.params.id));
-  if (idx === -1) return res.status(404).json({ error: 'Technique not found.' });
+router.patch('/:id', authenticate, authorize('admin', 'editor'), async (req, res) => {
+  const updates = {};
+  const allowedFields = ['technique', 'category', 'description', 'video', 'thumbnail', 'tags'];
 
-  const { technique, category, description } = req.body;
-  if (technique !== undefined) techniques[idx].technique = String(technique).trim();
-  if (category !== undefined)  techniques[idx].category  = String(category).trim();
-  if (description !== undefined) techniques[idx].description = String(description).trim();
+  allowedFields.forEach((field) => {
+    if (req.body[field] !== undefined) {
+      updates[field] = field === 'tags' ? (Array.isArray(req.body.tags) ? req.body.tags.map((tag) => String(tag).trim()) : []) : String(req.body[field]).trim();
+    }
+  });
 
-  res.json(techniques[idx]);
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: 'Nenhum campo válido enviado para atualização.' });
+  }
+
+  const updated = await Technique.findByIdAndUpdate(req.params.id, updates, { new: true });
+  if (!updated) {
+    return res.status(404).json({ error: 'Técnica não encontrada.' });
+  }
+
+  return res.json(updated);
 });
 
-/* ─────────────────────────────────────────────
-   DELETE /techniques/:id  – remove
-   ───────────────────────────────────────────── */
-router.delete('/:id', (req, res) => {
-  const idx = techniques.findIndex((t) => t.id === Number(req.params.id));
-  if (idx === -1) return res.status(404).json({ error: 'Technique not found.' });
+router.delete('/:id', authenticate, authorize('admin'), async (req, res) => {
+  const deleted = await Technique.findByIdAndDelete(req.params.id);
+  if (!deleted) {
+    return res.status(404).json({ error: 'Técnica não encontrada.' });
+  }
 
-  const [removed] = techniques.splice(idx, 1);
-  res.json({ message: 'Technique deleted successfully.', deleted: removed });
+  return res.json({ message: 'Técnica excluída com sucesso.' });
 });
 
 module.exports = router;

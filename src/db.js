@@ -1,12 +1,11 @@
-/**
- * In-memory data store for techniques.
- * Replace this module with a real database adapter (e.g. Prisma, MongoDB)
- * when you are ready to persist data.
- */
+const mongoose = require('mongoose');
+const { mongoUri } = require('./config');
 
-let nextId = 1;
+function connect() {
+  return mongoose.connect(mongoUri, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+  });
+}
 
-/** @type {Array<{id: number, technique: string, category: string, description: string}>} */
-const techniques = [];
-
-module.exports = { techniques, getId: () => nextId++ };
+module.exports = { connect, mongoose };

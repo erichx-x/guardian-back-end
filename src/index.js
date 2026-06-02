@@ -1,30 +1,31 @@
 const express = require('express');
+const cors = require('cors');
+const { connect } = require('./db');
+const { port } = require('./config');
 const techniquesRouter = require('./routes/techniques');
+const usersRouter = require('./routes/users');
+const authRouter = require('./routes/auth');
 
 const app = express();
-const PORT = process.env.PORT || 3001;
 
-/* ── Middleware ── */
+app.use(cors({ origin: '*' }));
 app.use(express.json());
 
-/* ── CORS (allow the Next.js dev server) ── */
-app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
-  if (req.method === 'OPTIONS') return res.sendStatus(204);
-  next();
-});
-
-/* ── Routes ── */
+app.use('/auth', authRouter);
 app.use('/techniques', techniquesRouter);
+app.use('/users', usersRouter);
 
-/* ── Health-check ── */
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
-/* ── Start ── */
-app.listen(PORT, () => {
-  console.log(`Guardian API running on http://localhost:${PORT}`);
-});
+connect()
+  .then(() => {
+    app.listen(port, () => {
+      console.log(`Guardian API running on http://localhost:${port}`);
+    });
+  })
+  .catch((error) => {
+    console.error('Falha ao conectar no MongoDB:', error);
+    process.exit(1);
+  });
 
 module.exports = app;
