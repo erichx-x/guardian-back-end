@@ -4,8 +4,7 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "nodemon src/index.js",
-    "seed": "node scripts/seed.js"
+    "dev": "nodemon src/index.js"
   },
   "dependencies": {
     "bcrypt": "^5.1.0",
